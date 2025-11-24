@@ -152,11 +152,11 @@ JS_FN(mmap_map) {
         }
 
         std::shared_ptr<BackingStore> backingStore = v8::SharedArrayBuffer::NewBackingStore(data, size, do_mmap_cleanup, NULL);
-        Nan::MaybeLocal<Object> buf = v8::SharedArrayBuffer::New(v8::Isolate::GetCurrent(), backingStore);
+        v8::Local<v8::SharedArrayBuffer> buf = v8::SharedArrayBuffer::New(v8::Isolate::GetCurrent(), backingStore);
         if (buf.IsEmpty()) {
             return Nan::ThrowError(std::string("couldn't allocate Node SharedArrayBuffer()").c_str());
         } else {
-            info.GetReturnValue().Set(buf.ToLocalChecked());
+            info.GetReturnValue().Set(buf);
         }
     }
 }
@@ -258,8 +258,8 @@ JS_FN(mmap_incore) {
     free(result_data);
 
     v8::Local<v8::Array> arr = Nan::New<v8::Array>(2);
-    Nan::Set(arr, 0, Nan::New(pages_unmapped));
-    Nan::Set(arr, 1, Nan::New(pages_mapped));
+    Nan::Set(arr.As<v8::Object>(), 0, Nan::New(pages_unmapped).As<v8::Value>());
+    Nan::Set(arr.As<v8::Object>(), 1, Nan::New(pages_mapped).As<v8::Value>());
     info.GetReturnValue().Set(arr);
 }
 
@@ -307,7 +307,7 @@ NAN_MODULE_INIT(Init) {
         Nan::DefineOwnProperty(
             exports,
             Nan::New(key).ToLocalChecked(),
-            Nan::New(val),
+            Nan::New(val).As<v8::Value>(),
             std_property_attrs
         );
     };
@@ -316,7 +316,7 @@ NAN_MODULE_INIT(Init) {
         Nan::DefineOwnProperty(
             exports,
             Nan::New<v8::String>(key).ToLocalChecked(),
-            Nan::GetFunction(Nan::New<FunctionTemplate>(fn)).ToLocalChecked(),
+            Nan::GetFunction(Nan::New<FunctionTemplate>(fn)).ToLocalChecked().As<v8::Value>(),
             std_property_attrs
         );
     };
@@ -364,7 +364,7 @@ NAN_MODULE_INIT(Init) {
     Nan::DefineOwnProperty(
         exports,
         Nan::New<v8::String>("sync_lib_private__").ToLocalChecked(),
-        Nan::GetFunction(Nan::New<FunctionTemplate>(mmap_sync_lib_private_)).ToLocalChecked(),
+        Nan::GetFunction(Nan::New<FunctionTemplate>(mmap_sync_lib_private_)).ToLocalChecked().As<v8::Value>(),
         static_cast<PropertyAttribute>(0)
     );
 
