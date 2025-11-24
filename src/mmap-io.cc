@@ -35,6 +35,37 @@ inline int do_mmap_advice(char* addr, size_t length, int advise) {
     return madvise(static_cast<void*>(addr), length, advise);
 }
 
+// Helper function to get data pointer and size from SharedArrayBuffer or Uint8Array
+inline bool get_buffer_info(Local<Value> val, char** data_out, size_t* size_out) {
+    // Check if it's a Uint8Array (our new return type)
+    if (val->IsUint8Array()) {
+        Local<Uint8Array> arr = val.As<Uint8Array>();
+        Local<ArrayBuffer> ab = arr->Buffer();
+        std::shared_ptr<BackingStore> bs = ab->GetBackingStore();
+        *data_out = static_cast<char*>(bs->Data()) + arr->ByteOffset();
+        *size_out = arr->ByteLength();
+        return true;
+    }
+    // Check if it's a SharedArrayBuffer
+    if (val->IsSharedArrayBuffer()) {
+        Local<SharedArrayBuffer> sab = val.As<SharedArrayBuffer>();
+        std::shared_ptr<BackingStore> bs = sab->GetBackingStore();
+        *data_out = static_cast<char*>(bs->Data());
+        *size_out = bs->ByteLength();
+        return true;
+    }
+    // Fallback to Buffer API for backward compatibility
+    if (val->IsObject()) {
+        Local<Object> obj = val.As<Object>();
+        if (node::Buffer::HasInstance(obj)) {
+            *data_out = node::Buffer::Data(obj);
+            *size_out = node::Buffer::Length(obj);
+            return true;
+        }
+    }
+    return false;
+}
+
 
 /*
 
@@ -152,11 +183,13 @@ JS_FN(mmap_map) {
         }
 
         std::shared_ptr<BackingStore> backingStore = v8::SharedArrayBuffer::NewBackingStore(data, size, do_mmap_cleanup, NULL);
-        v8::Local<v8::SharedArrayBuffer> buf = v8::SharedArrayBuffer::New(v8::Isolate::GetCurrent(), backingStore);
-        if (buf.IsEmpty()) {
+        v8::Local<v8::SharedArrayBuffer> sab = v8::SharedArrayBuffer::New(v8::Isolate::GetCurrent(), backingStore);
+        if (sab.IsEmpty()) {
             return Nan::ThrowError(std::string("couldn't allocate Node SharedArrayBuffer()").c_str());
         } else {
-            info.GetReturnValue().Set(buf);
+            // Create a Uint8Array view over the SharedArrayBuffer for Buffer-like API
+            v8::Local<v8::Uint8Array> view = v8::Uint8Array::New(sab, 0, size);
+            info.GetReturnValue().Set(view);
         }
     }
 }
@@ -172,9 +205,11 @@ JS_FN(mmap_advise) {
     if (!info[0]->IsObject())    return Nan::ThrowError("advice(): buffer (arg[0]) must be a Buffer");
     if (!info[1]->IsNumber())    return Nan::ThrowError("advice(): (arg[1]) must be an integer");
 
-    Local<Object>   buf     = get_obj(info[0]); // info[0]->ToObject(); // get_v<Local<Object>>(info[0]);
-    char*           data    = node::Buffer::Data(buf);
-    size_t          size    = node::Buffer::Length(buf);
+    char*   data;
+    size_t  size;
+    if (!get_buffer_info(info[0], &data, &size)) {
+        return Nan::ThrowError("advise(): buffer (arg[0]) must be a Buffer or SharedArrayBuffer");
+    }
 
     int ret = ([&]() -> int {
         if (info.Length() == 2) {
@@ -207,9 +242,11 @@ JS_FN(mmap_incore) {
 
     if (!info[0]->IsObject())    return Nan::ThrowError("advice(): buffer (arg[0]) must be a Buffer");
 
-    Local<Object>   buf     = get_obj(info[0]); // info[0]->ToObject(); // get_v<Local<Object>>(info[0]);
-    char*           data    = node::Buffer::Data(buf);
-    size_t          size    = node::Buffer::Length(buf);
+    char*   data;
+    size_t  size;
+    if (!get_buffer_info(info[0], &data, &size)) {
+        return Nan::ThrowError("incore(): buffer (arg[0]) must be a Buffer or SharedArrayBuffer");
+    }
 
 #ifdef _WIN32
     SYSTEM_INFO sysinfo;
@@ -276,8 +313,11 @@ JS_FN(mmap_sync_lib_private_) {
 
     if (!info[0]->IsObject())    return Nan::ThrowError("sync(): buffer (arg[0]) must be a Buffer");
 
-    Local<Object>   buf             = get_obj(info[0]); // info[0]->ToObject(); // get_v<Local<Object>>(info[0]);
-    char*           data            = node::Buffer::Data(buf);
+    char*   data;
+    size_t  buffer_size;  // Not used in this function but needed for get_buffer_info
+    if (!get_buffer_info(info[0], &data, &buffer_size)) {
+        return Nan::ThrowError("sync(): buffer (arg[0]) must be a Buffer or SharedArrayBuffer");
+    }
 
     int             offset          = get_v<int>(info[1], 0);
     size_t          length          = get_v<int>(info[2], 0);
